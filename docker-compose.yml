@@ -1,4 +1,4 @@
-version: "3.4"
+# docker-compose.yml
 
 services:
   api:
@@ -14,22 +14,45 @@ services:
       - db
       - redis
       - jaeger
-    volumes:
-      # shared volume between worker and api for media
-      - saleor-media:/app/media
     env_file:
       - common.env
       - backend.env
     environment:
       - JAEGER_AGENT_HOST=jaeger
-      - DASHBOARD_URL=http://localhost:9000/
-      - ALLOWED_HOSTS=localhost,api
+      - DASHBOARD_URL=https://${DASHBOARD_DOMAIN}
+      - ALLOWED_HOSTS=localhost,api,${PUBLIC_DOMAIN}
+      - ALLOWED_CLIENT_HOSTS=https://${DASHBOARD_DOMAIN}
+      - PUBLIC_URL=https://${PUBLIC_DOMAIN}
+      - DEBUG=True
+      - RSA_PRIVATE_KEY=${RSA_PRIVATE_KEY}
+        # Amazon S3 configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SECURITY_TOKEN=${AWS_SECURITY_TOKEN}
+      - AWS_S3_ENDPOINT_URL=${AWS_S3_ENDPOINT_URL}
+
+      - AWS_QUERYSTRING_AUTH=${AWS_QUERYSTRING_AUTH}
+      - AWS_S3_VERIFY=${AWS_S3_VERIFY}
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
+      - AWS_S3_SIGNATURE_VERSION=${AWS_S3_SIGNATURE_VERSION}
+      - AWS_MEDIA_CUSTOM_DOMAIN=${AWS_MEDIA_CUSTOM_DOMAIN}
+      - AWS_STATIC_CUSTOM_DOMAIN=${AWS_STATIC_CUSTOM_DOMAIN}
+
+      - AWS_MEDIA_BUCKET_NAME=${AWS_MEDIA_BUCKET_NAME}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME}
 
   dashboard:
     image: ghcr.io/saleor/saleor-dashboard:latest
     ports:
       - 9000:80
     restart: unless-stopped
+    networks:
+      - saleor-fronted-tier
+    environment:
+      - API_URL=https://${PUBLIC_DOMAIN}/graphql/
+      - APPS_MARKETPLACE_API_URL=${APPS_MARKETPLACE_API_URL}
+      - APP_MOUNT_URI=${APP_MOUNT_URI}
+      - DEMO_MODE=${DEMO_MODE}
 
   db:
     image: library/postgres:15-alpine
@@ -67,9 +90,6 @@ services:
     depends_on:
       - redis
       - mailpit
-    volumes:
-      # shared volume between worker and api for media
-      - saleor-media:/app/media
 
   jaeger:
     image: jaegertracing/all-in-one
@@ -96,6 +116,26 @@ services:
     restart: unless-stopped
     networks:
       - saleor-backend-tier
+    
+  caddy:
+    build:
+      context: ./dockerfile-dns
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MY_DOMAIN: ${MY_DOMAIN:?Domain is required}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?Cloudflare API token is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - saleor-caddy_data:/data
+      - saleor-caddy_config:/config
+      - saleor-media:/app/media
+    networks:
+      - saleor-backend-tier
+      - saleor-fronted-tier
 
 volumes:
   saleor-db:
@@ -103,7 +143,11 @@ volumes:
   saleor-redis:
     driver: local
   saleor-media:
+  saleor-caddy_data:
+  saleor-caddy_config:
 
 networks:
   saleor-backend-tier:
+    driver: bridge
+  saleor-fronted-tier:
     driver: bridge
